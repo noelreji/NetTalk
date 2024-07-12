@@ -6,41 +6,86 @@
 #include<stdlib.h>
 #include<unistd.h>
 #include<pthread.h>
-#include <sys/epoll.h>
-#include <fcntl.h>
+#include<sys/epoll.h>
+#include <sys/un.h>
+#include<fcntl.h>
 
 
-#define PORT 60004
+#define PORT 60006
 #define MAX_EVENTS 10
 #define SERVERBACKLOG 100
 
-typedef struct {
+typedef struct Message{
 
     int code;
     char message[1000];
 
-} Message;
+}Message;
 
 typedef struct client_config{
 
-    int clientfd;
-    int signal_socket;
+    int *clientfd;
+    int *signal_socket;
 
 }client_config;
 
+Message shared_message;
+int signal_socket;
+struct sockaddr_un addr;
+pthread_t who_sent;
 
-/*void manage_connection(int *clientfd ,  char *u_name) {
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-  
+void peer_signal(Message *msg, int signal_socket) {
+    fprintf(stderr, "\nIn peer_signal\n");
+    //memset(&who_sent,0,sizeof(pthread_t));
+    if (pthread_mutex_lock(&mutex) != 0) {
+        perror("pthread_mutex_lock failed");
+        return;
+    }
 
-}*/
+    shared_message.code = msg->code;
+    printf("\nLLL  %s",msg->message);
+        fflush(stdout);
+    strncpy(shared_message.message, msg->message, sizeof(shared_message.message) - 1);
+    shared_message.message[sizeof(shared_message.message) - 1] = '\0'; 
 
-void* handle_in( void *arg )  {
+    ssize_t bytes_written = sendto(signal_socket, "SIGMSG", sizeof("SIGMSG") - 1,0,  (const struct sockaddr *)&addr,sizeof(addr));
+    
+    if (bytes_written == -1) {
+        perror("write to signal_socket failed");
+    } 
+    else if (bytes_written < sizeof("SIGMSG") - 1) {
+        fprintf(stderr, "Partial write to signal_socket\n");
+        fflush(stderr);
+    }
+    else
+        who_sent = pthread_self();
+
+
+    if (pthread_mutex_unlock(&mutex) != 0) {
+        perror("pthread_mutex_unlock failed");
+    }
+
+        
+    fprintf(stderr, "\nOut peer_signal\n");
+    fflush(stderr);
+}
+
+
+/*void peer_retreive (int clientfd ){
+
+} */
+
+void *handle_in( void *arg )  {
 
     printf("\nInside Thread");
         fflush(stdout);
     
     char *user_name = (char *)malloc(100);
+    int auth = 0;
+    int bytes_read;
+    char signal_data[10];
     if (user_name == NULL) {
         perror("Memory allocation failed");
         pthread_exit(NULL);
@@ -48,8 +93,9 @@ void* handle_in( void *arg )  {
 
 
     client_config *cc = (client_config *)arg;
-    int clientfd = cc->clientfd;
-    int signal_socket = cc->signal_socket;
+    int clientfd = *(cc->clientfd);
+    printf("\n\n%d",clientfd);
+    int signal_socket = *(cc->signal_socket);
 
     //epoll instance for sending and receiving to multiple active clients
     struct epoll_event event , all_events[MAX_EVENTS];
@@ -64,51 +110,85 @@ void* handle_in( void *arg )  {
 
     if(epoll_ctl(epoll_fd,EPOLL_CTL_ADD,clientfd,&event) == -1 ){
         
-        perror("epoll_ctl");
+        perror("\n\nepoll_ctl client");
         exit(1);
     }
 
-    /*ssize_t bytes_read = read(clientfd, u_name, 99); // Read up to 99 bytes
-    if (bytes_read == -1) {
-        perror("Error reading data");
-        free(u_name); // Free allocated memory on error
-        pthread_exit(NULL);
-    } 
-    else if (bytes_read == 0) {
-        printf("Client closed connection\n");
-        free(u_name); // Free allocated memory
-        pthread_exit(NULL);
-    }*/
+    event.events = EPOLLIN ;
+    event.data.fd  = signal_socket;
+ 
+    if(epoll_ctl(epoll_fd,EPOLL_CTL_ADD,signal_socket,&event) == -1 ){
+            
+            perror("\n\nepoll_ctl server");
+            exit(1);
+    }
 
-    manage_connection();
+    int events_fired;
+    Message message;
+    while(1){
+       // printf("\nWaiting for events...");
+       // fflush(stdout);
+        printf("\n%d Client Waiting For Events",(unsigned long)pthread_self());
+            fflush( stdout );
+        events_fired = epoll_wait(epoll_fd , all_events,MAX_EVENTS,-1);
+        
+        if (events_fired == -1) {
+            perror("epoll_wait");
+            exit(EXIT_FAILURE);
+        }
+    
+        for(int i=0; i < events_fired; ++i){
+            
+            if( all_events[i].events & EPOLLIN ){
 
-    /*send(clientfd, u_name, bytes_read, 0);
-    free(u_name);
-    close(clientfd);
-    printf("Closed connection\n");
-    fflush(stdout);*/
+                if( all_events[i].data.fd == clientfd ){
 
+                    bytes_read = recv(clientfd,&message,sizeof(message),0);
+                    if(bytes_read == -1 ){
+                        send(clientfd,"404",sizeof(404),0);
+                        break;
+                    }
+                    else if( bytes_read > 0 ){
 
-    /*while(1){
+                        if(auth == 0)
+                        {
+                            if( 69 == ntohs(message.code))
+                            {
+                                auth = 1;
+                                strcpy(user_name , message.message);
+                                printf("\n%s",user_name);
+                                fflush(stdout);
+                                peer_signal(&message,signal_socket);
+                            }
+                        }
+                        else
+                        {
+                                printf("\n\nSignal Working");
+                                    fflush(stdout);
+                                peer_signal(&message,signal_socket);
+                        }
+                    }
+                }
+                else if(all_events[i].data.fd == signal_socket) {
+                    printf("\nPeer Data Send..%d",(unsigned long)pthread_self());
+                    fflush(stdout);
 
-        bytes_read = read(clientfd, &user_message, sizeof(user_message)); // Read up to 99 bytes
-        if( bytes_read == -1 ){
-           printf("\nError reading data from %s ",u_name);
-           send(clientfd, "400", strlen("400"), 0);
-           continue;
+                    if (pthread_equal(who_sent, pthread_self()))
+                    {
+                        recvfrom(signal_socket,signal_data,10,0,NULL,NULL);
+                        printf("\nPeer Data retrieval Complete..%d",(unsigned long)pthread_self());
+                        fflush(stdout);
+                    }
+                    send(clientfd,&shared_message,sizeof(Message),0);
+
+                    printf("\nPeer Data Send Complete..%d",(unsigned long)pthread_self());
+                }
+            }
         }
 
-        else if (bytes_read == 0) {
-            printf("Client closed connection\n");
-            free(u_name); // Free allocated memory
-            pthread_exit(NULL);
-        }    
-        else {
-
-
-        }
-    }*/
-
+    }
+    printf("\nPoo");
+        fflush(stdout);
     pthread_exit(NULL);
 }
 
@@ -118,8 +198,21 @@ void* handle_in( void *arg )  {
 int main( int argv , char **argc ){
     
     int sockfd = socket(AF_INET,SOCK_STREAM,0);
-    int signal_socket = socket(AF_INET,SOCK_STREAM,0);
-  
+    signal_socket = socket(AF_UNIX,SOCK_DGRAM,0);
+    
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, "/tmp/signal_soke.sock", sizeof(addr.sun_path) - 1);
+    
+    
+    unlink("/tmp/signal_soke.sock");
+
+    if (bind(signal_socket, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        perror("\nError Binding Signal Socket");
+        exit(0);
+    }
+
+    printf("Socket signal = %d",signal_socket);
 
     if(sockfd < 0 ){
         perror("Socket Creation failed");
@@ -132,6 +225,13 @@ int main( int argv , char **argc ){
     server_addr.sin_addr.s_addr = INADDR_ANY;  
 
     socklen_t client_len = sizeof(client_addr);
+    
+    int opt =1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt(SO_REUSEADDR) failed");
+        close(sockfd);
+        exit(1);
+    }
 
     if (bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) >= 0) {
         
@@ -145,24 +245,32 @@ int main( int argv , char **argc ){
             }
 
             printf("\nListening...\n\n");
+            
+            client_config *cc = (client_config *)malloc(sizeof(client_config));
+
             *clientfd = accept( sockfd , (struct sockaddr *)&client_addr,&client_len);
-
-            client_config cc = {
-                *clientfd,
-                signal_socket
-            };
-
+            printf("\n\n%d",*clientfd);
 
             pthread_t *t_client = (pthread_t *)malloc(sizeof(pthread_t));
             if( *clientfd != -1 )
             {
                 
                 printf("\nClient connected");
-                pthread_create(t_client , NULL , handle_in , &cc);
-                
-            }        
-        }
-        
+
+                cc->clientfd = clientfd;
+                cc->signal_socket = &signal_socket;
+
+                pthread_create(t_client , NULL , handle_in , cc);
+                //free(cc);
+            }      
+            else
+            {
+                printf("\n\nFailed to accept client");
+                free(cc);
+                continue;
+
+            }  
+        }       
     }
     else
         perror("Error in binding socket");

@@ -8,8 +8,16 @@
 
 
 
-#define PORT 60004
+#define PORT 60006
 
+typedef struct {
+
+    int code;
+    char message[1000];
+
+}Message;
+
+Message message;
 
 int main( int argc , char *argv[] ){
 
@@ -43,26 +51,51 @@ int main( int argc , char *argv[] ){
     }
     else
         printf("\n\nConnected..\n\n");
-    int op;
     
-    send(sockfd , user_name , strlen(user_name),0);
+    message.code = htons(69);
+    strcpy(message.message , user_name);
+    printf("\n%s",message.message);
+    
+    int bytes_send;
+    resend:  bytes_send = send(sockfd , &message , sizeof(message),0);
+
+    if( bytes_send == -1 ) {
+        printf("\n\nResending");
+        goto resend;
+    }
+    else
+        printf(" Data send\n");
+
+    char *b = (char *)malloc(1000*sizeof(char));
 
     while(1){
 
-        int bytes_read = read(sockfd, in_data, 99);
-        if (bytes_read > 0) {
-            in_data[bytes_read] = '\0';  // Null-terminate the received data
-            printf("%s just joined the chat\n", in_data);
-            memset(in_data, 0, 100);  // Clear the buffer for the next read
-        } 
-        else if (bytes_read == 0) {
-            printf("Server closed connection\n");
-            break;
-        } 
-        else {
-            perror("Error reading data");
-            break;
+        /*printf("\n--> ");
+                fflush(stdout);
+
+        fgets(b,1000,stdin);
+
+        printf("\n%s",b);
+                fflush(stdout);
+
+        message.code = 100;
+        strcpy(message.message,b);*/
+
+        memset(&message,0,sizeof(message));
+       // printf("\nWaiting");
+           // fflush(stdout);
+        bytes_send = recv(sockfd , &message , sizeof(message),0);
+
+        if( bytes_send == -1 ) {
+            printf("\n\nResending");
         }
+        else
+        {
+            printf("\n%s",message.message);
+                    fflush(stdout);
+        }
+
+        //memset(b,0,sizeof(b));
     }
 
 
