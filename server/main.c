@@ -7,7 +7,7 @@
 #include<unistd.h>
 #include<pthread.h>
 #include<sys/epoll.h>
-#include <sys/un.h>
+#include<sys/un.h>
 #include<fcntl.h>
 
 
@@ -22,7 +22,7 @@ typedef struct Message{
 
 }Message;
 
-typedef struct client_config{
+typedef struct client_config {
 
     int *clientfd;
     int *signal_socket;
@@ -170,6 +170,7 @@ void *handle_in( void *arg )  {
                     }
                 }
                 else if(all_events[i].data.fd == signal_socket) {
+                    usleep(100000);
                     printf("\nPeer Data Send..%d",(unsigned long)pthread_self());
                     fflush(stdout);
 
@@ -180,12 +181,10 @@ void *handle_in( void *arg )  {
                         fflush(stdout);
                     }
                     send(clientfd,&shared_message,sizeof(Message),0);
-
                     printf("\nPeer Data Send Complete..%d",(unsigned long)pthread_self());
                 }
             }
         }
-
     }
     printf("\nPoo");
         fflush(stdout);
