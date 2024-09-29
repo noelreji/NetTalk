@@ -1,7 +1,10 @@
 {
     "files.associations": {
         "*.ejs": "html",
-        "in.h": "c"
+        "in.h": "c",
+        "stdio.h": "c",
+        "pthread.h": "c",
+        "string.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

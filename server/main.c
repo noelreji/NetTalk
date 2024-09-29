@@ -8,7 +8,6 @@
 #include<pthread.h>
 #include<sys/epoll.h>
 #include<sys/un.h>
-#include<fcntl.h>
 
 
 #define PORT 60006
@@ -35,23 +34,23 @@ struct sockaddr_un addr;
 pthread_t who_sent;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t allow_sw = PTHREAD_COND_INITIALIZER;
+
 
 void peer_signal(Message *msg, int signal_socket) {
-    fprintf(stderr, "\nIn peer_signal\n");
-    //memset(&who_sent,0,sizeof(pthread_t));
-    if (pthread_mutex_lock(&mutex) != 0) {
-        perror("pthread_mutex_lock failed");
-        return;
-    }
+
+    memset(&who_sent,0,sizeof(pthread_t));
+
+    //pthread_cond_wait(&allow_sw, &mutex);
 
     shared_message.code = msg->code;
-    printf("\nLLL  %s",msg->message);
-        fflush(stdout);
     strncpy(shared_message.message, msg->message, sizeof(shared_message.message) - 1);
     shared_message.message[sizeof(shared_message.message) - 1] = '\0'; 
 
-    ssize_t bytes_written = sendto(signal_socket, "SIGMSG", sizeof("SIGMSG") - 1,0,  (const struct sockaddr *)&addr,sizeof(addr));
-    
+    ssize_t bytes_written = sendto(signal_socket, "SIGMSG", sizeof("SIGMSG") - 1,0,  (const struct sockaddr *)&addr,sizeof(addr));  
+    printf("\n%s  just sent signal.",msg->message);
+        fflush(stdout);
+
     if (bytes_written == -1) {
         perror("write to signal_socket failed");
     } 
@@ -61,27 +60,12 @@ void peer_signal(Message *msg, int signal_socket) {
     }
     else
         who_sent = pthread_self();
-
-
-    if (pthread_mutex_unlock(&mutex) != 0) {
-        perror("pthread_mutex_unlock failed");
-    }
-
-        
-    fprintf(stderr, "\nOut peer_signal\n");
-    fflush(stderr);
+    
 }
 
 
-/*void peer_retreive (int clientfd ){
-
-} */
-
 void *handle_in( void *arg )  {
-
-    printf("\nInside Thread");
-        fflush(stdout);
-    
+        
     char *user_name = (char *)malloc(100);
     int auth = 0;
     int bytes_read;
@@ -94,7 +78,6 @@ void *handle_in( void *arg )  {
 
     client_config *cc = (client_config *)arg;
     int clientfd = *(cc->clientfd);
-    printf("\n\n%d",clientfd);
     int signal_socket = *(cc->signal_socket);
 
     //epoll instance for sending and receiving to multiple active clients
@@ -128,8 +111,8 @@ void *handle_in( void *arg )  {
     while(1){
        // printf("\nWaiting for events...");
        // fflush(stdout);
-        printf("\n%d Client Waiting For Events",(unsigned long)pthread_self());
-            fflush( stdout );
+        //printf("\n%d Client Waiting For Events",(unsigned long)pthread_self());
+            //fflush( stdout );
         events_fired = epoll_wait(epoll_fd , all_events,MAX_EVENTS,-1);
         
         if (events_fired == -1) {
@@ -156,9 +139,15 @@ void *handle_in( void *arg )  {
                             {
                                 auth = 1;
                                 strcpy(user_name , message.message);
-                                printf("\n%s",user_name);
+                                printf("\n%s joined the chat. %d",user_name,clientfd);
                                 fflush(stdout);
-                                peer_signal(&message,signal_socket);
+                                if (pthread_mutex_lock(&mutex) != 0) {
+                                    perror("pthread_mutex_lock failed");
+                                }
+                                    peer_signal(&message,signal_socket);
+
+                                pthread_mutex_unlock(&mutex);
+
                             }
                         }
                         else
@@ -168,20 +157,25 @@ void *handle_in( void *arg )  {
                                 peer_signal(&message,signal_socket);
                         }
                     }
+                    else 
+                    {
+                        printf("\nPoo");
+                        fflush(stdout);
+                        pthread_exit(NULL);   
+                    }
                 }
                 else if(all_events[i].data.fd == signal_socket) {
-                    usleep(100000);
-                    printf("\nPeer Data Send..%d",(unsigned long)pthread_self());
+                    printf("\n%s Data Send..",user_name);
                     fflush(stdout);
 
                     if (pthread_equal(who_sent, pthread_self()))
                     {
                         recvfrom(signal_socket,signal_data,10,0,NULL,NULL);
-                        printf("\nPeer Data retrieval Complete..%d",(unsigned long)pthread_self());
+                        printf("\n%s Data retrieval Complete..",user_name);
                         fflush(stdout);
                     }
                     send(clientfd,&shared_message,sizeof(Message),0);
-                    printf("\nPeer Data Send Complete..%d",(unsigned long)pthread_self());
+                    printf("\n%s Data Send Complete..",user_name);
                 }
             }
         }
@@ -190,8 +184,6 @@ void *handle_in( void *arg )  {
         fflush(stdout);
     pthread_exit(NULL);
 }
-
-
 
 
 int main( int argv , char **argc ){

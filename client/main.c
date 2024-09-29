@@ -5,101 +5,102 @@
 #include<string.h>
 #include<unistd.h>
 #include<stdlib.h>
-
-
+#include<pthread.h>
 
 #define PORT 60006
 
 typedef struct {
-
     int code;
-    char message[1000];
-
-}Message;
+    char uname[50];
+    char message[200];
+} Message;
 
 Message message;
 
-int main( int argc , char *argv[] ){
+int sockfd;
 
+// Function to handle receiving data from the server in a separate thread
+void *receive_data(void *arg) {
+    int bytes_received;
+    Message received_message;
 
-    char *in_data = (char *)malloc(100);
-    if (in_data == NULL) {
-        perror("Memory allocation failed");
-        exit(EXIT_FAILURE);
-    }    
-    
-    char *user_name = argv[1];
-    int client_fd;
-    struct sockaddr_in addr;
-    int sockfd = socket(AF_INET,SOCK_STREAM,0);
+    while (1) {
+        memset(&received_message, 0, sizeof(received_message));
+        bytes_received = recv(sockfd, &received_message, sizeof(received_message), 0);
 
-    if(sockfd < 0 ) {
-        perror("Socket creation failed");
-        free(in_data);
-        exit(EXIT_FAILURE);    
-        
+        if (bytes_received <= 0) {
+            // If recv returns 0, the server has likely closed the connection
+            printf("\nServer disconnected or error occurred.\n");
+            break;
+        } else {
+            printf("\n%s: %s\n", received_message.uname, received_message.message);
+            fflush(stdout);  // Ensure that output is printed immediately
+        }
     }
 
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("Usage: %s <username>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    char *user_name = argv[1];
+    struct sockaddr_in addr;
+
+    // Create socket
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Set server address details
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT); 
+    addr.sin_port = htons(PORT);
 
-    if(connect(sockfd , (struct sockaddr *)&addr,(socklen_t )sizeof(addr)) < 0 ){
-        printf("Connection failed..\n");
-        free(in_data);
+    // Connect to the server
+    if (connect(sockfd, (struct sockaddr *)&addr, (socklen_t)sizeof(addr)) < 0) {
+        perror("Connection failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    } else {
+        printf("Connected to server...\n");
+    }
+
+    // Initialize message data
+    message.code = htons(69);
+    strcpy(message.uname, user_name);
+
+    // Create a thread for receiving data from the server
+    pthread_t recv_thread;
+    if (pthread_create(&recv_thread, NULL, receive_data, NULL) != 0) {
+        perror("Thread creation failed");
+        close(sockfd);
         exit(EXIT_FAILURE);
     }
-    else
-        printf("\n\nConnected..\n\n");
-    
-    message.code = htons(69);
-    strcpy(message.message , user_name);
-    printf("\n%s",message.message);
-    
-    int bytes_send;
-    resend:  bytes_send = send(sockfd , &message , sizeof(message),0);
 
-    if( bytes_send == -1 ) {
-        printf("\n\nResending");
-        goto resend;
-    }
-    else
-        printf(" Data send\n");
+    // Main loop for sending data
+    while (1) {
+        printf("Enter message: ");
+        fgets(message.message, sizeof(message.message), stdin);
+        message.message[strcspn(message.message, "\n")] = '\0';  // Remove trailing newline
 
-    char *b = (char *)malloc(1000*sizeof(char));
-
-    while(1){
-
-        /*printf("\n--> ");
-                fflush(stdout);
-
-        fgets(b,1000,stdin);
-
-        printf("\n%s",b);
-                fflush(stdout);
-
-        message.code = 100;
-        strcpy(message.message,b);*/
-
-        memset(&message,0,sizeof(message));
-       // printf("\nWaiting");
-           // fflush(stdout);
-        bytes_send = recv(sockfd , &message , sizeof(message),0);
-
-        if( bytes_send == -1 ) {
-            printf("\n\nResending");
+        int bytes_sent = send(sockfd, &message, sizeof(message), 0);
+        if (bytes_sent == -1) {
+            perror("Failed to send message");
+        } else {
+            //printf("Message sent: %s\n", message.message);
         }
-        else
-        {
-            printf("\n%s",message.message);
-                    fflush(stdout);
-        }
-
-        //memset(b,0,sizeof(b));
     }
 
+    // Wait for the receiving thread to finish (if ever needed)
+    pthread_join(recv_thread, NULL);
 
-    free(in_data);
+    // Clean up
     close(sockfd);
     return 0;
 }
