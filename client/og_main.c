@@ -57,19 +57,26 @@ void add_message_to_queue( Message *msg , bool self) {
         return;
     }
 
-    new_node->msg = msg;
+// Allocate space for the message and copy it
+    new_node->msg = malloc(sizeof(Message));
+    if (new_node->msg == NULL) {
+        printf("Message allocation failed\n");
+        free(new_node);  // Free the node before returning
+        pthread_mutex_unlock(&lock);
+        return;
+    }
+    memcpy(new_node->msg, msg, sizeof(Message));
+    
     new_node->sender = self; 
     new_node->next = NULL;
     new_node->prev = tail;
 
-    if (tail != NULL) {
-        tail->next = new_node;
+    if (head == NULL) {
+        head = new_node; // Queue is empty
+    } else {
+        tail->next = new_node; // Link new node at the end
     }
     tail = new_node;
-
-    if (head == NULL) {
-        head = new_node;
-    }
 
     pthread_cond_signal(&cond);
     pthread_mutex_unlock(&lock);
@@ -142,12 +149,13 @@ void *render_input_text(void *arg) {
                     break;
                 }
 
-                strcpy(new_message->uname, (char *)arg);  // Set the username
+                strcpy(new_message->uname, user_name);  // Set the username
                 strcpy(new_message->message, input);      // Copy the message from the input buffer
-                new_message->code = 100;
+                new_message->code = htons(100);
 
                 bytes_send = send_message(new_message);
-                add_message_to_queue(new_message,true);  // Add message to queue
+                if( bytes_send >= 0 )
+                    add_message_to_queue(new_message,true);  // Add message to queue
 
                 // Reset input state for the next message
                 memset(input, 0, sizeof(input));
@@ -260,11 +268,10 @@ void *render_ui(void *arg) {
 
         // Remove the node from the queue
         head = head->next;
-        if (head == NULL) {
+        if (head == NULL) 
             tail = NULL;
-        } else {
+        else 
             head->prev = NULL;
-        }
 
         // Unlock the mutex so other threads can access the queue
         pthread_mutex_unlock(&lock);
@@ -273,7 +280,7 @@ void *render_ui(void *arg) {
         if(current_node->sender)
         {
             wattron(full_win, COLOR_PAIR(2));  // Use green color for now (can customize based on logic)
-            mvwprintw(full_win, message_row, cols/2, "[you]: %s", msg->message);
+            mvwprintw(full_win, message_row, cols - strlen(msg->message) - 10, "[you]: %s", msg->message); // Adjusted for right alignment
             wattroff(full_win, COLOR_PAIR(2));
         }
         else
